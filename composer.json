@@ -1,0 +1,24 @@
+{
+    "name": "centarro/commerce_kickstart_installer_helper",
+    "description": "This is a helper library for the Commerce Kickstart installer",
+    "license": ["GPL-2.0-or-later"],
+    "type": "library",
+    "autoload": {
+        "psr-4": {
+            "Centarro\\InstallerHelper\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Centarro",
+            "email": "contact@centarro.io"
+        },
+        {
+            "name": "Jakub Piasecki (zaporylie)",
+            "email": "jakub@centarro.io"
+        }
+    ],
+    "require": {
+        "drupal/recipe_installer_kit": "^1.0.0-alpha8"
+    }
+}
