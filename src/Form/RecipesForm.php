@@ -5,7 +5,6 @@ namespace Centarro\InstallerHelper\Form;
 use Composer\InstalledVersions;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
-use Drupal\Core\Render\Element\Checkboxes;
 use Drupal\RecipeKit\Installer\FormInterface as InstallerFormInterface;
 
 final class RecipesForm extends FormBase implements InstallerFormInterface {
@@ -46,7 +45,7 @@ final class RecipesForm extends FormBase implements InstallerFormInterface {
         '#type' => 'checkbox',
         '#title' => $this->t('Install all features with sample content'),
         '#description' => $this->t('Great for seeing all that Drupal Commerce has to offer. Not recommended for a site you intend to take live'),
-        '#value' => 'drupal/commerce_kickstart_demo',
+        '#return_value' => 'drupal/commerce_kickstart_demo',
       ];
     }
     catch (\Exception $e) {
@@ -62,7 +61,6 @@ final class RecipesForm extends FormBase implements InstallerFormInterface {
       $form['add_ons'][$flavor] = [
         '#type' => 'checkbox',
         '#title' => $flavor,
-        '#value_callback' => static::class . '::valueCallback',
         '#default_value' => $flavor,
         '#states' => [
           'disabled' => [
@@ -107,7 +105,7 @@ final class RecipesForm extends FormBase implements InstallerFormInterface {
     if (($pressed_button && $pressed_button['#op'] === 'submit') || $form_state->isProgrammed()) {
       $flavors = $form_state->getValue('add_ons', []);
       $flavors = array_filter($flavors);
-      foreach ($flavors as $flavor) {
+      foreach (array_keys($flavors) as $flavor) {
         $list = array_merge($list, $install_state['profile_info']['recipes']['optional'][$flavor]);
       }
     }
@@ -116,19 +114,6 @@ final class RecipesForm extends FormBase implements InstallerFormInterface {
     // check in ::toInstallTask() when the query string is decoded.
     // @see \Drupal\Component\Utility\UrlHelper::buildQuery()
     $install_state['parameters']['recipes'] = $list ? array_unique($list) : NULL;
-  }
-
-  public static function valueCallback(&$element, $input, FormStateInterface $form_state): array {
-    // If the input was a pipe-separated string or `*`, transform it -- this is
-    // for compatibility with `drush site:install`.
-    if (is_string($input)) {
-      $selections = $input === '*'
-        ? $element['#options']['#default_value']
-        : array_map('trim', explode('|', $input));
-
-      $input = array_combine($selections, $selections);
-    }
-    return Checkboxes::valueCallback($element, $input, $form_state);
   }
 
 }
