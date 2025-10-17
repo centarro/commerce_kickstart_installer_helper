@@ -58,6 +58,12 @@ final class RecipesForm extends RecipeSelectionFormBase implements InstallerForm
     $form = parent::buildForm($form, $form_state);
     $form['add_ons']['#value_callback'] = self::class . '::valueCallback';
 
+    // We display this form even when no optional recipes were defined, thus
+    // we must ensure the option list is set to empty array.
+    if (!isset($form['add_ons']['#options'])) {
+      $form['add_ons']['#options'] = [];
+    }
+
     foreach ($this->getChoices() as $key => $choice) {
       $form['add_ons'][$key]['#states'] = [
         'disabled' => [
