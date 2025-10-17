@@ -1,27 +1,29 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Centarro\InstallerHelper\Form;
 
 use Composer\InstalledVersions;
-use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Render\Element\Checkboxes;
+use Drupal\RecipeKit\Installer\Form\RecipeSelectionFormBase;
 use Drupal\RecipeKit\Installer\FormInterface as InstallerFormInterface;
 
-final class RecipesForm extends FormBase implements InstallerFormInterface {
+final class RecipesForm extends RecipeSelectionFormBase implements InstallerFormInterface {
 
   /**
    * {@inheritdoc}
    */
   public static function toInstallTask(array $install_state): array {
-    // Skip this form if optional recipes have already been chosen, or if the
-    // profile doesn't define any optional recipe groups.
-    if (array_key_exists('demo', $install_state['parameters']) || array_key_exists('recipes', $install_state['parameters']) || empty($install_state['profile_info']['recipes']['optional'])) {
-      $run = INSTALL_TASK_SKIP;
+    // Skip this form if optional recipes have already been chosen.
+    if (array_key_exists('recipes', $install_state['parameters'])) {
+      $install_state['parameters']['add_ons'] = INSTALL_TASK_SKIP;
     }
     return [
       'display_name' => t('Choose demo or add-ons'),
       'type' => 'form',
-      'run' => $run ?? INSTALL_TASK_RUN_IF_REACHED,
+      'run' => $install_state['parameters']['add_ons'] ?? INSTALL_TASK_RUN_IF_REACHED,
       'function' => static::class,
     ];
   }
@@ -37,8 +39,8 @@ final class RecipesForm extends FormBase implements InstallerFormInterface {
    * {@inheritdoc}
    */
   public function buildForm(array $form, FormStateInterface $form_state, ?array $install_state = NULL): array {
-    assert(is_array($install_state));
-
+    // Rather than using composer, check recipes folder as unpacked recipes
+    // won't be available via composer.
     try {
       InstalledVersions::getInstallPath('drupal/commerce_kickstart_demo');
       $form['demo'] = [
@@ -53,35 +55,22 @@ final class RecipesForm extends FormBase implements InstallerFormInterface {
       $form['demo_info']['#markup'] = t('Add the Commerce Demo recipe to your codebase and reload this page if you want to install a complete demo store with sample content: <p><pre>composer require drupal/commerce_kickstart_demo</pre></p>');
     }
 
-    $flavors = array_keys($install_state['profile_info']['recipes']['optional'] ?? []);
-    $form['add_ons'] = [
-      '#tree' => TRUE,
-    ];
-    foreach (array_combine($flavors, $flavors) as $flavor) {
-      $form['add_ons'][$flavor] = [
-        '#type' => 'checkbox',
-        '#title' => $flavor,
-        '#default_value' => $flavor,
-        '#states' => [
-          'disabled' => [
-            ':input[name="demo"]' => ['checked' => TRUE],
-          ],
-          'checked' => [
-            ':input[name="demo"]' => ['checked' => TRUE],
-          ]
+    $form = parent::buildForm($form, $form_state);
+    $form['add_ons']['#value_callback'] = self::class . '::valueCallback';
+
+    foreach ($this->getChoices() as $key => $choice) {
+      $form['add_ons'][$key]['#states'] = [
+        'disabled' => [
+          ':input[name="demo"]' => ['checked' => TRUE],
         ],
+        'checked' => [
+          ':input[name="demo"]' => ['checked' => TRUE],
+        ]
       ];
     }
-
-    $form['actions'] = [
-      'submit' => [
-        '#type' => 'submit',
-        '#value' => $this->t('Next'),
-        '#button_type' => 'primary',
-        '#op' => 'submit',
-      ],
-      '#type' => 'actions',
-    ];
+    unset($form['actions']['skip']);
+    // The following line is here to avoid php warning when the form is
+    // displayed in commerce_kickstart installer theme.
     $form['#title'] = '';
     return $form;
   }
@@ -91,29 +80,55 @@ final class RecipesForm extends FormBase implements InstallerFormInterface {
    */
   public function submitForm(array &$form, FormStateInterface $form_state): void {
     global $install_state;
-    $list = [];
+    parent::submitForm($form, $form_state);
 
-    $pressed_button = $form_state->getTriggeringElement();
-
-    // If demo was selected we
+    // If demo was selected, we force recipes selection to only match demo.
     if ($demo = $form_state->getValue('demo', [])) {
-      $list[] = $demo;
+      $install_state['parameters']['recipes'] = is_array($demo) ? $demo : [$demo];
     }
 
-    // Only choose add-ons if the Next button was pressed, or if the form was
-    // submitted programmatically (i.e., by `drush site:install`).
-    if (($pressed_button && $pressed_button['#op'] === 'submit') || $form_state->isProgrammed()) {
-      $flavors = $form_state->getValue('add_ons', []);
-      $flavors = array_filter($flavors);
-      foreach (array_keys($flavors) as $flavor) {
-        $list = array_merge($list, $install_state['profile_info']['recipes']['optional'][$flavor]);
-      }
-    }
-    // A NULL parameter will simply be encoded into the URL query string like
-    // `?site_name=Foo&recipes`, which will satisfy the `array_key_exists()`
-    // check in ::toInstallTask() when the query string is decoded.
-    // @see \Drupal\Component\Utility\UrlHelper::buildQuery()
-    $install_state['parameters']['recipes'] = $list ? array_unique($list) : NULL;
+    // Indicate that we're done with this form.
+    // @see ::toInstallTask()
+    $install_state['parameters']['add_ons'] = INSTALL_TASK_SKIP;
   }
 
+  public static function valueCallback(&$element, $input, FormStateInterface $form_state): array {
+    // If the input was a pipe-separated string or `*`, transform it -- this is
+    // for compatibility with `drush site:install`.
+    if (is_string($input)) {
+      $selections = $input === '*'
+        ? array_keys($element['#options'])
+        : array_map('trim', explode('|', $input));
+
+      $input = array_combine($selections, $selections);
+    }
+    return Checkboxes::valueCallback($element, $input, $form_state);
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function getChoices(): iterable {
+    global $install_state;
+    $choices = [];
+
+    foreach ($install_state['profile_info']['recipes']['optional'] ?? [] as $key => $value) {
+      // For backwards compatibility, each choice can either be a flat array of
+      // package names (in which case the key is the human-readable name), or
+      // it can be an associative array with `name` and `packages` elements (the
+      // best practice).
+      if (array_is_list($value)) {
+        $value = [
+          'name' => $key,
+          'packages' => $value,
+          'description' => NULL,
+        ];
+      }
+      // Allow the name to be a translatable string, which won't happen unless
+      // we pass it through the translation system.
+      $value['name'] = t($value['name']);
+      $choices[$key] = $value;
+    }
+    return $choices;
+  }
 }
