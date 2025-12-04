@@ -6,6 +6,7 @@ namespace Centarro\InstallerHelper\Form;
 
 use Composer\InstalledVersions;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Recipe\Recipe;
 use Drupal\Core\Render\Element\Checkboxes;
 use Drupal\RecipeKit\Installer\Form\RecipeSelectionFormBase;
 use Drupal\RecipeKit\Installer\FormInterface as InstallerFormInterface;
@@ -42,7 +43,7 @@ final class RecipesForm extends RecipeSelectionFormBase implements InstallerForm
     // Rather than using composer, check recipes folder as unpacked recipes
     // won't be available via composer.
     try {
-      InstalledVersions::getInstallPath('drupal/commerce_kickstart_demo');
+      $this->getRecipePath('drupal/commerce_kickstart_demo');
       $form['demo'] = [
         '#type' => 'checkbox',
         '#title' => $this->t('Install all features with sample content'),
@@ -136,5 +137,45 @@ final class RecipesForm extends RecipeSelectionFormBase implements InstallerForm
       $choices[$key] = $value;
     }
     return $choices;
+  }
+
+
+  /**
+   * Get recipe path.
+   *
+   * This method was borrowed from recipe installer kit and its objective is
+   * to find a path no matter if recipe is known to composer or local.
+   *
+   * @internal
+   *   This method is internal, which means it could be changed in any way, or
+   *   removed at any time, without warning. Don't rely on it.
+   */
+  private function getRecipePath(?string $name = NULL): string {
+    try {
+      return InstalledVersions::getInstallPath($name);
+    }
+    catch (\OutOfBoundsException $e) {
+      // Composer doesn't know where it is, so try to extrapolate the path by
+      // reading `composer.json`.
+      ['install_path' => $project_root] = InstalledVersions::getRootPackage();
+      $file = $project_root . DIRECTORY_SEPARATOR . 'composer.json';
+      $data = file_get_contents($file);
+      $data = json_decode($data, TRUE, flags: JSON_THROW_ON_ERROR);
+
+      $installer_paths = $data['extra']['installer-paths'] ?? [];
+      foreach ($installer_paths as $path => $criteria) {
+        // The first configured install path which matches the criteria is the
+        // one we'll use, since that is what Composer would also do.
+        if (in_array($name, $criteria, TRUE) || in_array('type:' . Recipe::COMPOSER_PROJECT_TYPE, $criteria, TRUE)) {
+          $path = $project_root . DIRECTORY_SEPARATOR . $path;
+
+          return $name
+            ? str_replace(['{$vendor}', '{$name}'], explode('/', $name, 2), $path)
+            : str_replace('{$name}', '', $path);
+        }
+      }
+      // We couldn't figure it out; throw the original exception.
+      throw $e;
+    }
   }
 }
